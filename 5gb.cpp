@@ -32,7 +32,7 @@ const int STAFF_HEIGHT = 200;
 const int LINE_SPACING = 12;  // Reduced from 20 to make staff lines closer
 const int NOTE_RADIUS = 8;    // Slightly smaller notes to fit the tighter spacing
 
-// Note frequencies for two channels
+// Note frequencies for three channels
 std::unordered_map<SDL_Keycode, float> CHANNEL1_NOTES = {
     {SDLK_a, 261.63f},  // C4
     {SDLK_s, 293.66f},  // D4
@@ -51,6 +51,17 @@ std::unordered_map<SDL_Keycode, float> CHANNEL2_NOTES = {
     {SDLK_b, 783.99f},  // G5
     {SDLK_n, 880.00f},  // A5
     {SDLK_m, 987.77f}   // B5
+};
+
+// Wave channel notes (one octave lower than channel 1)
+std::unordered_map<SDL_Keycode, float> CHANNEL3_NOTES = {
+    {SDLK_1, 130.81f},  // C3
+    {SDLK_2, 146.83f},  // D3
+    {SDLK_3, 164.81f},  // E3
+    {SDLK_4, 174.61f},  // F3
+    {SDLK_5, 196.00f},  // G3
+    {SDLK_6, 220.00f},  // A3
+    {SDLK_7, 246.94f}   // B3
 };
 
 // Map note frequencies to staff positions
@@ -78,15 +89,15 @@ struct PianoKey {
     SDL_Color activeColor;
     bool isBlack;
     SDL_Keycode keycode;
-    int channel;  // 1 or 2
+    int channel;  // 1, 2, or 3
     bool isActive;
     float frequency;
 };
 
 // Note types
 enum NoteType {
-    EIGHTH_NOTE,
-    QUARTER_NOTE
+    EIGHTH_NOTE,  // Default, shorter note
+    QUARTER_NOTE  // Longer note
 };
 
 // Note on the staff
@@ -94,7 +105,7 @@ struct StaffNote {
     float frequency;
     int position;  // Relative to middle line
     int x;
-    int channel;   // 1 or 2
+    int channel;   // 1, 2, or 3
     bool isPlaying;
     NoteType type; // Eighth or quarter note
 };
@@ -108,8 +119,20 @@ public:
     float phase = 0.0f;
 };
 
+// Wave channel has a different waveform
+class WaveChannelState : public ChannelState {
+public:
+    // Wave pattern (16 samples of 4-bit each)
+    std::vector<float> waveform = {
+        0.0f, 0.2f, 0.4f, 0.6f, 0.8f, 1.0f, 0.8f, 0.6f,
+        0.0f, -0.2f, -0.4f, -0.6f, -0.8f, -1.0f, -0.8f, -0.6f
+    };
+    size_t wavePos = 0;
+};
+
 ChannelState CH1;
 ChannelState CH2;
+WaveChannelState CH3;
 std::vector<float> WAV_BUFFER;
 std::atomic<bool> QUIT_FLAG(false);
 std::vector<PianoKey> pianoKeys;
@@ -573,6 +596,10 @@ void updatePlayback() {
             std::lock_guard<std::mutex> lock2(CH2.lock);
             CH2.active = false;
         }
+        {
+            std::lock_guard<std::mutex> lock3(CH3.lock);
+            CH3.active = false;
+        }
         return;
     }
     
@@ -594,10 +621,14 @@ void updatePlayback() {
             std::lock_guard<std::mutex> lock(CH1.lock);
             CH1.active = true;
             CH1.frequency = note.frequency;
-        } else {
+        } else if (note.channel == 2) {
             std::lock_guard<std::mutex> lock(CH2.lock);
             CH2.active = true;
             CH2.frequency = note.frequency;
+        } else if (note.channel == 3) {
+            std::lock_guard<std::mutex> lock(CH3.lock);
+            CH3.active = true;
+            CH3.frequency = note.frequency;
         }
         
         // For quarter notes, we'll keep them in the queue longer
@@ -684,11 +715,13 @@ void renderStaff(SDL_Renderer* renderer) {
             continue;
         }
         
-        // Draw note circle
+        // Draw note circle with color based on channel
         if (note.channel == 1) {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 255, 255);
+            SDL_SetRenderDrawColor(renderer, 0, 0, 255, 255);  // Blue for pulse 1
+        } else if (note.channel == 2) {
+            SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);  // Red for pulse 2
         } else {
-            SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
+            SDL_SetRenderDrawColor(renderer, 0, 180, 0, 255);  // Green for wave
         }
         
         // Draw filled circle for the note
@@ -803,9 +836,11 @@ void renderUI(SDL_Renderer* renderer) {
     SDL_Rect channelRect = {WINDOW_WIDTH - 150, 20, 130, 30};
     
     if (currentChannel == 1) {
-        SDL_SetRenderDrawColor(renderer, 200, 200, 255, 255);
+        SDL_SetRenderDrawColor(renderer, 200, 200, 255, 255);  // Light blue for pulse 1
+    } else if (currentChannel == 2) {
+        SDL_SetRenderDrawColor(renderer, 255, 200, 200, 255);  // Light red for pulse 2
     } else {
-        SDL_SetRenderDrawColor(renderer, 255, 200, 200, 255);
+        SDL_SetRenderDrawColor(renderer, 200, 255, 200, 255);  // Light green for wave
     }
     
     SDL_RenderFillRect(renderer, &channelRect);
@@ -851,7 +886,7 @@ static int audioCallback(const void* inputBuffer, void* outputBuffer,
         out[i] = 0.0f;
     }
     
-    // Process Channel 1
+    // Process Channel 1 (Pulse wave)
     {
         std::lock_guard<std::mutex> lock(CH1.lock);
         if (CH1.active && CH1.frequency > 0) {
@@ -865,7 +900,7 @@ static int audioCallback(const void* inputBuffer, void* outputBuffer,
         }
     }
     
-    // Process Channel 2
+    // Process Channel 2 (Pulse wave)
     {
         std::lock_guard<std::mutex> lock(CH2.lock);
         if (CH2.active && CH2.frequency > 0) {
@@ -875,6 +910,29 @@ static int audioCallback(const void* inputBuffer, void* outputBuffer,
                     CH2.phase -= 2.0f * M_PI;
                 }
                 out[i] += (CH2.phase < M_PI) ? AMPLITUDE : -AMPLITUDE;
+            }
+        }
+    }
+    
+    // Process Channel 3 (Wave channel)
+    {
+        std::lock_guard<std::mutex> lock(CH3.lock);
+        if (CH3.active && CH3.frequency > 0) {
+            for (unsigned int i = 0; i < framesPerBuffer; i++) {
+                // Calculate how much to advance in the waveform
+                float phaseIncrement = CH3.frequency / SAMPLE_RATE;
+                CH3.phase += phaseIncrement;
+                
+                // Wrap phase if needed
+                if (CH3.phase >= 1.0f) {
+                    CH3.phase -= 1.0f;
+                }
+                
+                // Map phase to waveform index (0 to 15)
+                size_t index = static_cast<size_t>(CH3.phase * 16) % 16;
+                
+                // Add the sample from the waveform
+                out[i] += CH3.waveform[index] * AMPLITUDE * 0.5f; // Slightly quieter
             }
         }
     }
@@ -932,7 +990,8 @@ void handleMouseClick(int x, int y, bool isRightClick) {
     // Check if click is on channel selection
     if (x >= WINDOW_WIDTH - 150 && x <= WINDOW_WIDTH - 20 &&
         y >= 20 && y <= 50) {
-        currentChannel = (currentChannel == 1) ? 2 : 1;
+        // Cycle through channels: 1 -> 2 -> 3 -> 1
+        currentChannel = (currentChannel % 3) + 1;
     }
     
     // Check if click is on note type selection
@@ -1020,13 +1079,14 @@ int main() {
     }
     
     std::cout << "Game Boy Audio Composer" << std::endl;
-    std::cout << "Channel 1 keys: A-S-D-F-G-H-J" << std::endl;
-    std::cout << "Channel 2 keys: Z-X-C-V-B-N-M" << std::endl;
+    std::cout << "Channel 1 (Pulse) keys: A-S-D-F-G-H-J" << std::endl;
+    std::cout << "Channel 2 (Pulse) keys: Z-X-C-V-B-N-M" << std::endl;
+    std::cout << "Channel 3 (Wave) keys: 1-2-3-4-5-6-7" << std::endl;
     std::cout << "Press a key to select a note, then click on the staff to place it" << std::endl;
     std::cout << "Right-click to remove notes" << std::endl;
     std::cout << "Press P to play the composition" << std::endl;
     std::cout << "Press C to clear the staff" << std::endl;
-    std::cout << "Press TAB to switch channels" << std::endl;
+    std::cout << "Press TAB to cycle through channels" << std::endl;
     std::cout << "Press N to toggle between eighth and quarter notes" << std::endl;
     std::cout << "Press Q or ESC to quit..." << std::endl;
     
@@ -1084,6 +1144,15 @@ int main() {
                     CH2.frequency = it2->second;
                     updatePianoKeyState(keycode, true);
                 }
+                
+                // Channel 3 (Wave) note handling
+                auto it3 = CHANNEL3_NOTES.find(keycode);
+                if (it3 != CHANNEL3_NOTES.end()) {
+                    std::lock_guard<std::mutex> lock(CH3.lock);
+                    CH3.active = true;
+                    CH3.frequency = it3->second;
+                    // No piano key to update for wave channel
+                }
             } else if (event.type == SDL_KEYUP) {
                 SDL_Keycode keycode = event.key.keysym.sym;
                 
@@ -1101,6 +1170,13 @@ int main() {
                     std::lock_guard<std::mutex> lock(CH2.lock);
                     CH2.active = false;
                     updatePianoKeyState(keycode, false);
+                }
+                
+                // Channel 3 (Wave) note handling
+                auto it3 = CHANNEL3_NOTES.find(keycode);
+                if (it3 != CHANNEL3_NOTES.end()) {
+                    std::lock_guard<std::mutex> lock(CH3.lock);
+                    CH3.active = false;
                 }
             } else if (event.type == SDL_MOUSEBUTTONDOWN) {
                 if (event.button.button == SDL_BUTTON_LEFT) {
