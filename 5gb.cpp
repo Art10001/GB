@@ -29,8 +29,8 @@ const int STAFF_X = 50;
 const int STAFF_Y = 250;
 const int STAFF_WIDTH = 900;
 const int STAFF_HEIGHT = 200;
-const int LINE_SPACING = 20;
-const int NOTE_RADIUS = 10;
+const int LINE_SPACING = 12;  // Reduced from 20 to make staff lines closer
+const int NOTE_RADIUS = 8;    // Slightly smaller notes to fit the tighter spacing
 
 // Note frequencies for two channels
 std::unordered_map<SDL_Keycode, float> CHANNEL1_NOTES = {
@@ -661,8 +661,8 @@ void renderStaff(SDL_Renderer* renderer) {
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     int centerY = STAFF_Y + STAFF_HEIGHT / 2;
     
-    // Draw 5 lines above and below center
-    for (int i = -4; i <= 4; i += 2) {
+    // Draw 5 lines above and below center (more lines for better chord visibility)
+    for (int i = -6; i <= 6; i += 2) {
         int y = centerY + i * LINE_SPACING / 2;
         SDL_RenderDrawLine(renderer, STAFF_X, y, STAFF_X + STAFF_WIDTH, y);
     }
