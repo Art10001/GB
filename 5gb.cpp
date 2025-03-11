@@ -83,6 +83,12 @@ struct PianoKey {
     float frequency;
 };
 
+// Note types
+enum NoteType {
+    EIGHTH_NOTE,
+    QUARTER_NOTE
+};
+
 // Note on the staff
 struct StaffNote {
     float frequency;
@@ -90,6 +96,7 @@ struct StaffNote {
     int x;
     int channel;   // 1 or 2
     bool isPlaying;
+    NoteType type; // Eighth or quarter note
 };
 
 // Sound generation state
@@ -110,6 +117,7 @@ std::vector<StaffNote> staffNotes;
 bool isPlacingNote = false;
 int currentChannel = 1;
 float currentFrequency = 0.0f;
+NoteType currentNoteType = EIGHTH_NOTE;
 int scrollOffset = 0;
 bool isPlayingSequence = false;
 int playbackPosition = 0;
@@ -510,7 +518,7 @@ void addNoteToStaff(int x, float frequency, int channel) {
     auto it = NOTE_POSITIONS.find(frequency);
     if (it != NOTE_POSITIONS.end()) {
         int position = it->second;
-        staffNotes.push_back({frequency, position, x + scrollOffset, channel, false});
+        staffNotes.push_back({frequency, position, x + scrollOffset, channel, false, currentNoteType});
     }
 }
 
@@ -592,8 +600,15 @@ void updatePlayback() {
             CH2.frequency = note.frequency;
         }
         
-        // Remove from queue after a short delay
-        playbackQueue.pop_front();
+        // For quarter notes, we'll keep them in the queue longer
+        if (note.type == EIGHTH_NOTE || playbackQueue.size() > 4) {
+            playbackQueue.pop_front();
+        } else {
+            // Move to the back of the queue to extend play time for quarter notes
+            StaffNote quarterNote = playbackQueue.front();
+            playbackQueue.pop_front();
+            playbackQueue.push_back(quarterNote);
+        }
     }
     
     // Advance playback position
@@ -693,6 +708,19 @@ void renderStaff(SDL_Renderer* renderer) {
             // Stem up for lower notes
             SDL_RenderDrawLine(renderer, x - NOTE_RADIUS, y, x - NOTE_RADIUS, y - 30);
         }
+    
+        // Draw note head based on type
+        if (note.type == QUARTER_NOTE) {
+            // For quarter notes, draw an empty circle
+            SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+            for (int dy = -NOTE_RADIUS+2; dy <= NOTE_RADIUS-2; dy++) {
+                for (int dx = -NOTE_RADIUS+2; dx <= NOTE_RADIUS-2; dx++) {
+                    if (dx*dx + dy*dy <= (NOTE_RADIUS-2)*(NOTE_RADIUS-2)) {
+                        SDL_RenderDrawPoint(renderer, x + dx, y + dy);
+                    }
+                }
+            }
+        }
         
         // Highlight if playing
         if (note.isPlaying) {
@@ -783,6 +811,19 @@ void renderUI(SDL_Renderer* renderer) {
     SDL_RenderFillRect(renderer, &channelRect);
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_RenderDrawRect(renderer, &channelRect);
+    
+    // Draw note type selection
+    SDL_Rect noteTypeRect = {WINDOW_WIDTH - 150, 60, 130, 30};
+    
+    if (currentNoteType == EIGHTH_NOTE) {
+        SDL_SetRenderDrawColor(renderer, 220, 220, 220, 255);
+    } else {
+        SDL_SetRenderDrawColor(renderer, 180, 180, 180, 255);
+    }
+    
+    SDL_RenderFillRect(renderer, &noteTypeRect);
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+    SDL_RenderDrawRect(renderer, &noteTypeRect);
     
     // Draw instructions
     SDL_Rect instructRect = {50, WINDOW_HEIGHT - 60, WINDOW_WIDTH - 100, 50};
@@ -893,6 +934,12 @@ void handleMouseClick(int x, int y, bool isRightClick) {
         y >= 20 && y <= 50) {
         currentChannel = (currentChannel == 1) ? 2 : 1;
     }
+    
+    // Check if click is on note type selection
+    if (x >= WINDOW_WIDTH - 150 && x <= WINDOW_WIDTH - 20 &&
+        y >= 60 && y <= 90) {
+        currentNoteType = (currentNoteType == EIGHTH_NOTE) ? QUARTER_NOTE : EIGHTH_NOTE;
+    }
 }
 
 int main() {
@@ -980,6 +1027,7 @@ int main() {
     std::cout << "Press P to play the composition" << std::endl;
     std::cout << "Press C to clear the staff" << std::endl;
     std::cout << "Press TAB to switch channels" << std::endl;
+    std::cout << "Press N to toggle between eighth and quarter notes" << std::endl;
     std::cout << "Press Q or ESC to quit..." << std::endl;
     
     // Main event loop
@@ -1012,6 +1060,11 @@ int main() {
                 // Check for channel switch
                 if (keycode == SDLK_TAB) {
                     currentChannel = (currentChannel == 1) ? 2 : 1;
+                }
+                
+                // Check for note type switch
+                if (keycode == SDLK_n) {
+                    currentNoteType = (currentNoteType == EIGHTH_NOTE) ? QUARTER_NOTE : EIGHTH_NOTE;
                 }
                 
                 // Channel 1 note handling
