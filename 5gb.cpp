@@ -7,6 +7,7 @@
 #include <mutex>
 #include <fstream>
 #include <deque>
+#include <algorithm>
 #include <SDL2/SDL.h>
 #include <portaudio.h>
 
